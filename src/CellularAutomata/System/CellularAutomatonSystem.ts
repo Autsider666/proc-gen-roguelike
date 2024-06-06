@@ -1,19 +1,17 @@
 import {Entity, Query, System, SystemType, TagQuery, World} from "excalibur";
-import {InfectedComponent} from "../Component/InfectedComponent.ts";
 import {GridComponent} from "../../Component/GridComponent.ts";
 import {TileComponent} from "../../Component/TileComponent.ts";
 import {NeighborComponent} from "../../Component/NeighborComponent.ts";
-import {InfectedPool} from "../../Utility/Pools.ts";
 import {IntervalSystem} from "../../System/IntervalSystem.ts";
+import {CellComponent} from "../Component/CellComponent.ts";
 
-export type CellType = typeof GridComponent | typeof TileComponent | typeof NeighborComponent;
+export type CellType = typeof CellComponent | typeof GridComponent | typeof TileComponent | typeof NeighborComponent;
 export const CellComponents = [GridComponent, TileComponent, NeighborComponent] as const;
 
 export class CellularAutomatonSystem extends IntervalSystem {
     systemType: SystemType = SystemType.Draw;
 
     private cellQuery: Query<CellType>;
-    private infectedCellQuery: Query<typeof InfectedComponent | CellType>;
 
     // private random: Random = new Random();
 
@@ -34,30 +32,31 @@ export class CellularAutomatonSystem extends IntervalSystem {
         // noinspection TypeScriptValidateTypes
         this.cellQuery = world.query(CellComponents);
         this.cellQuery.entityAdded$.subscribe(entity => {
-            if (entity.has(InfectedComponent)) {
-                console.error('Not expecting any infected cells here.')
-            }
+           const cell = entity.get(CellComponent);
+            cell.alive ? this.reviveCell(entity) : this.killCell(entity);
 
-            this.deadCells.add(entity);
-            this.aliveCells.delete(entity);
+            cell.on<'dead'>('dead',() => this.killCell(entity));
+            cell.on<'alive'>('alive',() => this.reviveCell(entity));
         });
 
         this.cellQuery.entityRemoved$.subscribe(entity => {
             this.aliveCells.delete(entity)
             this.deadCells.delete(entity)
         });
+    }
 
-        // noinspection TypeScriptValidateTypes
-        this.infectedCellQuery = world.query([InfectedComponent, ...CellComponents]);
-        this.infectedCellQuery.entityAdded$.subscribe(entity => {
-            this.deadCells.delete(entity);
-            this.aliveCells.add(entity);
-        });
+    private reviveCell(entity:Entity<CellComponent>): void {
+        this.aliveCells.add(entity);
+        this.deadCells.delete(entity);
 
-        this.infectedCellQuery.entityRemoved$.subscribe(entity => {
-            this.aliveCells.delete(entity)
-            this.deadCells.add(entity)
-        });
+        entity.get(CellComponent).resurrect();
+    }
+
+    private killCell(entity:Entity<CellComponent>): void {
+        this.deadCells.add(entity);
+        this.aliveCells.delete(entity);
+
+        entity.get(CellComponent).kill();
     }
 
     update(elapsedMs: number): void {
@@ -70,7 +69,7 @@ export class CellularAutomatonSystem extends IntervalSystem {
             // 1. Any live cell with fewer than two live neighbors dies, as if by underpopulation.
             // 2. Any live cell with two or three live neighbors lives on to the next generation.
             // 3. Any live cell with more than three live neighbors dies, as if by overpopulation.
-            const livingNeighbourCount = cell.get(NeighborComponent).neighbors.filter(neighbor => neighbor.has(InfectedComponent)).length;
+            const livingNeighbourCount = cell.get(NeighborComponent).neighbors.filter(neighbor => neighbor.get(CellComponent)?.alive).length;
             if (livingNeighbourCount < this.minNeighborsToLive || livingNeighbourCount > this.maxNeighborsToLive) {
                 killList.add(cell);
             }
@@ -79,11 +78,7 @@ export class CellularAutomatonSystem extends IntervalSystem {
         // 4. Any dead cell with exactly three live neighbors becomes a live cell, as if by reproduction.
         const infectList = new Set<Entity>;
         for (const cell of this.deadCells) {
-            if (cell.has(InfectedComponent)) {
-                continue;
-            }
-
-            const infectedNeighbors = cell.get(NeighborComponent).neighbors.filter(neighbor => neighbor.has(InfectedComponent)).length;
+            const infectedNeighbors = cell.get(NeighborComponent).neighbors.filter(neighbor => neighbor.get(CellComponent)?.alive).length;
             if (infectedNeighbors === this.neighborsToInfect) {
                 infectList.add(cell);
             }
@@ -108,11 +103,9 @@ export class CellularAutomatonSystem extends IntervalSystem {
         //     })),
         // });
 
-        killList.forEach((cell: Entity) => {
-            cell.removeComponent(InfectedComponent);
-        });
-        infectList.forEach(cell => {
-            cell.addComponent(InfectedPool.requestComponent());
-        });
+
+        // TODO check if kill/infectList contain some identical entities
+        killList.forEach((cell: Entity) => this.killCell(cell));
+        infectList.forEach(cell => this.reviveCell(cell));
     }
 }

@@ -5,17 +5,18 @@ import {InfectionSpawnerSystem} from "../CellularAutomata/System/InfectionSpawne
 import {GridComponent} from "../Component/GridComponent.ts";
 import {NeighborComponent} from "../Component/NeighborComponent.ts";
 import {CellularAutomatonSystem} from "../CellularAutomata/System/CellularAutomatonSystem.ts";
+import {CellComponent} from "../CellularAutomata/Component/CellComponent.ts";
 
 export class ArenaScene extends Scene {
     onActivate() {
-        this.world.add(new InfectionSpawnerSystem(this.world, 500));
+        this.world.add(new InfectionSpawnerSystem(this.world, 100));
         this.world.add(CellularAutomatonSystem);
         this.engine.backgroundColor = Color.Black;
 
-        const tileSize: number = 5;
+        const tileSize: number = 10;
 
-        const rows = 100;
-        const columns = 200;
+        const rows = 50;
+        const columns = 75;
 
         const background = new TileMap({
             name: 'background',
@@ -78,6 +79,7 @@ export class ArenaScene extends Scene {
                         new TileComponent(tile),
                         new GridComponent(tile.x,tile.y),
                         new NeighborComponent(),
+                        new CellComponent(tileSize),
                     ]
                 });
 
@@ -86,6 +88,8 @@ export class ArenaScene extends Scene {
         });
 
         this.add(infection);
+
+        infection.on('postupdate',() => console.log(infection.getOnScreenTiles().length))
 
         // this.add(new Player(new Vector(100,100)))
     }

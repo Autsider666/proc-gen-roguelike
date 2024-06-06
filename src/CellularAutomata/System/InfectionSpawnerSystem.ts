@@ -1,22 +1,20 @@
 import {BoundingBox, Entity, Query, Random, SystemType, World} from "excalibur";
-import {InfectedComponent} from "../Component/InfectedComponent.ts";
 import {GridComponent} from "../../Component/GridComponent.ts";
 import {TileComponent} from "../../Component/TileComponent.ts";
 import Array2D from "../../Utility/Array2D.ts";
 import {PatternLoader} from "../Utility/PatternLoader.ts";
 import {CellComponents, CellType} from "./CellularAutomatonSystem.ts";
-import {InfectedPool} from "../../Utility/Pools.ts";
 import {IntervalSystem} from "../../System/IntervalSystem.ts";
+import {CellComponent} from "../Component/CellComponent.ts";
 
 export class InfectionSpawnerSystem extends IntervalSystem {
     systemType: SystemType = SystemType.Draw;
 
-    private infectedQuery: Query<typeof InfectedComponent | CellType>;
     private cellQuery: Query<CellType>;
 
     private readonly random = new Random();
 
-    private readonly infectedTiles = new Set<Entity<typeof InfectedComponent | CellType>>();
+    private readonly aliveCells = new Set<Entity<CellType>>();
     private readonly deadCells = new Set<Entity<CellType>>();
 
     private readonly worldBounds: BoundingBox = new BoundingBox(0, 0, 0, 0);
@@ -34,10 +32,11 @@ export class InfectionSpawnerSystem extends IntervalSystem {
         // noinspection TypeScriptValidateTypes
         this.cellQuery = world.query(CellComponents);
         this.cellQuery.entityAdded$.subscribe(entity => {
-            if (entity.has(InfectedComponent)) {
-                console.error('Not expecting any infected cells here.')
-            }
-            this.deadCells.add(entity);
+            const cell = entity.get(CellComponent);
+            cell.alive ? this.reviveCell(entity) : this.killCell(entity);
+
+            cell.on<'dead'>('dead',() => this.killCell(entity));
+            cell.on<'alive'>('alive',() => this.reviveCell(entity));
 
             const grid = entity.get(GridComponent);
             this.infectableMap.set(grid.x,grid.y,entity);
@@ -50,36 +49,32 @@ export class InfectionSpawnerSystem extends IntervalSystem {
         });
         this.cellQuery.entityRemoved$.subscribe(entity => {
             this.deadCells.delete(entity);
-            this.infectedTiles.delete(entity);
+            this.aliveCells.delete(entity);
 
             const grid = entity.get(GridComponent);
             this.infectableMap.delete(grid.x,grid.y);
-        });
-
-        // noinspection TypeScriptValidateTypes
-        this.infectedQuery = world.query([InfectedComponent, ...CellComponents]);
-        this.infectedQuery.entityAdded$.subscribe(entity => {
-            this.infectedTiles.add(entity);
-            this.deadCells.delete(entity);
-
-            const grid = entity.get(GridComponent);
-            this.infectableMap.delete(grid.x,grid.y);
-        });
-        this.infectedQuery.entityRemoved$.subscribe(entity => {
-            this.infectedTiles.delete(entity);
-            this.deadCells.add(entity);
-
-            const grid = entity.get(GridComponent);
-            this.infectableMap.set(grid.x,grid.y, entity);
         });
     }
 
+    private reviveCell(entity:Entity<CellComponent>): void {
+        this.aliveCells.add(entity);
+        this.deadCells.delete(entity);
+
+        entity.get(CellComponent).resurrect();
+    }
+
+    private killCell(entity:Entity<CellComponent>): void {
+        this.deadCells.add(entity);
+        this.aliveCells.delete(entity);
+
+        entity.get(CellComponent).kill();
+    }
     update(elapsedMs: number): void {
         if (this.shouldWait(elapsedMs)) {
             return;
         }
 
-        if (this.infectedTiles.size >= this.minimalInfections) {
+        if (this.aliveCells.size >= this.minimalInfections) {
             return;
         }
 
@@ -153,7 +148,7 @@ export class InfectionSpawnerSystem extends IntervalSystem {
                 continue;
             }
 
-            tilesToInfect.forEach(tile => tile.addComponent(InfectedPool.requestComponent()));
+            tilesToInfect.forEach(entity => this.reviveCell(entity));
 
             break;
         }
